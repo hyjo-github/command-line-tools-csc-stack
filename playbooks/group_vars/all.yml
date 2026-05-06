@@ -1,4 +1,4 @@
 ---
-vm_user_account: "ubuntu"
+vm_user_account: "almalinux"
 index_html_path: "../files/html/index.html"
 stack_name: "set me"

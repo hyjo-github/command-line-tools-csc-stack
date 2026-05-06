@@ -5,7 +5,7 @@
 
   tasks:
     - name: Update the repository cache and install nginx
-      ansible.builtin.apt:
+      ansible.builtin.dnf:
         name: nginx
         state: latest
         update_cache: yes
@@ -18,9 +18,32 @@
 
 
     - name: Copy index.html to nginx root directory
-      copy:
-        src: "{{ index_html_path }}"
-        dest: /var/www/html/index.html
-        owner: www-data
-        group: www-data
-        mode: '0644'
+      block:
+        - name: Create nginx root directory
+          ansible.builtin.file:
+            path: /srv/www/html
+            state: directory
+            owner: root
+            group: root
+            mode: '0755'
+        - name: Copy index.html
+          ansible.builtin.copy:
+            src: "{{ index_html_path }}"
+            dest: /srv/www/html/index.html
+            owner: root
+            group: root
+            mode: '0644'
+        - name: Update nginx.conf
+          ansible.builtin.lineinfile:
+            path: /etc/nginx/nginx.conf
+            regexp: '^(\s*)root(\s+)(.*;)$'
+            backrefs: yes
+            line: '\1root\2/srv/www/html;'
+            state: present
+            backup: yes
+            mode: '0644'
+        - name: Restart nginx
+          ansible.builtin.service:
+            name: nginx
+            state: "reloaded"
+
