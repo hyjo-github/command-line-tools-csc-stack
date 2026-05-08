@@ -1,5 +1,6 @@
 ---
-- hosts: os_instances_group
+- name: Deploy nginx in vm
+  hosts: os_instances_group
   gather_facts: true
   become: true
 
@@ -8,13 +9,13 @@
       ansible.builtin.dnf:
         name: nginx
         state: latest
-        update_cache: yes
+        update_cache: true
 
     - name: Ensure nginx is started and enabled to start at boot
       ansible.builtin.service:
         name: nginx
         state: started
-        enabled: yes
+        enabled: true
 
 
     - name: Copy index.html to nginx root directory
@@ -37,13 +38,12 @@
           ansible.builtin.lineinfile:
             path: /etc/nginx/nginx.conf
             regexp: '^(\s*)root(\s+)(.*;)$'
-            backrefs: yes
+            backrefs: true
             line: '\1root\2/srv/www/html;'
             state: present
-            backup: yes
+            backup: true
             mode: '0644'
         - name: Restart nginx
           ansible.builtin.service:
             name: nginx
             state: "reloaded"
-

@@ -1,5 +1,6 @@
 ---
-- hosts: localhost
+- name: Build Heat stack
+  hosts: localhost
   gather_facts: false
   vars:
     heat_environment_file: "heat_params.yaml"
@@ -7,19 +8,19 @@
   tasks:
     - name: Build a Heat stack for the NGINX VM
       register: heat_stack
-      os_stack:
+      openstack.cloud.stack:
         name: "{{ stack_name }}"
         state: present
         template: "servers_group.yaml"
-        environment: 
+        environment:
           - "{{ heat_environment_file }}"
 
     - name: Debug the Heat stack outputs
-      debug:
+      ansible.builtin.debug:
         var: heat_stack
 
     - name: Wait for the VM to become accessible
-      wait_for:
+      ansible.builtin.wait_for:
         host: "{{ item }}"
         port: 22
         state: started
@@ -28,10 +29,9 @@
         - "{{ heat_stack.stack.outputs[0].output_value }}"
 
     - name: Add host to the dynamic inventory
-      add_host:
+      ansible.builtin.add_host:
         name: "{{ item }}"
         groups: "os_instances_group"
         ansible_ssh_user: "{{ vm_user_account }}"
       with_items:
         - "{{ heat_stack.stack.outputs[0].output_value }}"
-        
