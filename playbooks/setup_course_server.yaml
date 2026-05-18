@@ -1,0 +1,210 @@
+- name: Course Server
+  hosts: os_instances_group
+  become: true
+
+  vars:
+    student_group: students
+    cpu_quota: "50%"
+    memory_limit: "1G"
+
+  tasks:
+
+    #
+    # Updates and packages
+    #
+
+    - name: Update system
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+      
+    - name: Install Extra Packages for Enterprise Linux repository configuration
+      ansible.builtin.dnf:
+        name:
+          - epel-release
+        state: present
+
+    - name: Install packages
+      ansible.builtin.dnf:
+        name:
+          - fail2ban
+          - firewalld
+          - podman
+          - slirp4netns
+          - fuse-overlayfs
+        state: present
+
+    #
+    # Services
+    #
+
+    - name: Enable services
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - fail2ban
+        - firewalld
+
+    #
+    # SSH hardening
+    #
+
+    - name: Harden SSH
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?{{ item.key }}'
+        line: '{{ item.key }} {{ item.value }}'
+      loop:
+        - { key: PermitRootLogin, value: "no" }
+        - { key: PasswordAuthentication, value: "no" }
+        - { key: PubkeyAuthentication, value: "yes" }
+        - { key: MaxAuthTries, value: 3 }
+        - { key: LoginGraceTime, value: 30 }
+
+    - name: Restart SSH
+      ansible.builtin.systemd_service:
+        name: sshd
+        state: restarted
+
+    #
+    # Firewall
+    #
+
+    - name: Allow SSH
+      ansible.posix.firewalld:
+        service: ssh
+        permanent: true
+        state: enabled
+        immediate: true
+
+    #
+    # SELinux
+    #
+
+    - name: Ensure SELinux enforcing
+      ansible.posix.selinux:
+        policy: targeted
+        state: enforcing
+
+    #
+    # Groups and users
+    #
+
+    - name: Create student Group
+      ansible.builtin.group:
+        name: "{{ student_group }}"
+        state: present
+
+    - name: Read student CSV
+      community.general.read_csv:
+        path: "{{ playbook_dir }}/../files/students.csv"
+      register: student_list
+      become: false
+      delegate_to: localhost
+      run_once: true
+
+    - name: Create students
+      ansible.builtin.user:
+        name: "{{ item.username }}"
+        groups: "{{ student_group }}"
+        create_home: true
+        shell: /bin/bash
+      loop: "{{ student_list.list }}"
+
+    #
+    # SSH keys
+    #
+
+    - name: Install SSH keys
+      ansible.posix.authorized_key:
+        user: "{{ item.username }}"
+        key: "{{ item.pubkey }}"
+      loop: "{{ student_list.list }}"
+
+    #
+    # Podman rootless
+    #
+
+    - name: Enable lingering (podman works without login session)
+      ansible.builtin.command:
+        cmd: loginctl enable-linger {{ item.username }}
+        creates: /var/lib/systemd/linger/{{ item.username }}
+      loop: "{{ student_list.list }}"
+
+    # - name: Configure subuid
+    #   lineinfile:
+    #     path: /etc/subuid
+    #     line: "{{ item }}:100000:65536"
+    #     create: yes
+    #   loop: "{{ students }}"
+
+    # - name: Configure subgid
+    #   lineinfile:
+    #     path: /etc/subgid
+    #     line: "{{ item }}:100000:65536"
+    #     create: yes
+    #   loop: "{{ students }}"
+
+    #
+    # Alias docker -> podman
+    #
+
+    - name: Add podman alias
+      ansible.builtin.lineinfile:
+        path: "/home/{{ item.username }}/.bashrc"
+        line: "alias docker=podman"
+        create: true
+        owner: "{{ item.username }}"
+        mode: "0644"
+      loop: "{{ student_list.list }}"
+
+    #
+    # Resource limits
+    #
+    - name: Prepare to create systemd user slice override
+      ansible.builtin.file:
+        path: /etc/systemd/system/user-.slice.d
+        state: "directory"
+        mode: "0755"
+
+    - name: Create systemd user slice override
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/user-.slice.d/limits.conf
+        content: |
+          [Slice]
+          CPUQuota={{ cpu_quota }}
+          MemoryMax={{ memory_limit }}
+        mode: "0644"
+
+    - name: Reload systemd
+      ansible.builtin.systemd_service:
+        daemon_reexec: true
+
+    - name: Set process limits
+      ansible.builtin.blockinfile:
+        path: /etc/security/limits.conf
+        block: |
+          @{{ student_group }} hard nproc 100
+          @{{ student_group }} hard nofile 1024
+
+    #
+    # Automatic updates
+    #
+    - name: Install dnf-automatic
+      ansible.builtin.dnf:
+        name: dnf-automatic
+        state: present
+
+    - name: Enable automatic updates
+      ansible.builtin.lineinfile:
+        path: /etc/dnf/automatic.conf
+        regexp: '^apply_updates'
+        line: 'apply_updates = yes'
+
+    - name: Enable timer
+      ansible.builtin.systemd_service:
+        name: dnf-automatic.timer
+        enabled: true
+        state: started
